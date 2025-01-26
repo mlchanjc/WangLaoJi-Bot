@@ -24,7 +24,7 @@ async def sync(ctx):
 @bot.hybrid_command()
 async def testbot(ctx):
     """testbot"""
-    await ctx.send("Hello! I'm your Discord bot!")
+    await ctx.send("i hate nig")
 
 
 @bot.hybrid_command()
@@ -32,7 +32,7 @@ async def createimage(ctx, file: discord.Attachment):
     """Creates shit"""
     if file.content_type.startswith("image/"):
         view = ImageSelectionView(file.url)
-        await ctx.send("Choose a static image to append:", view=view)
+        await ctx.send("Choose a base image", view=view)
     else:
         await ctx.send("Please upload a valid image file.")
 
