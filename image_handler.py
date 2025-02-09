@@ -27,15 +27,13 @@ class ImageSelectionView(discord.ui.View):
             async def button_callback(interaction, img=img):
                 is_base_bg, location, size = parse_filename(img)
 
-                # Determine the paths based on whether it's a base background or not
-                if is_base_bg:
-                    bg_img_src = os.path.join(IMAGE_URL, img)
-                    fg_img_src = self.user_image_url
-                else:
-                    bg_img_src = self.user_image_url
-                    fg_img_src = os.path.join(IMAGE_URL, img)
-
-                image_io = create_image(bg_img_src, fg_img_src, location, size)
+                image_io = create_image(
+                    is_base_bg,
+                    os.path.join(IMAGE_URL, img),
+                    self.user_image_url,
+                    location,
+                    size,
+                )
 
                 await interaction.message.edit(
                     content="",
@@ -85,56 +83,94 @@ def parse_filename(filename):
         filename (str): The filename to parse.
 
     Returns:
-        tuple: (position, size) where position is (x, y) and size is (width_percentage, height_percentage)
+        tuple: (is_base_bg, position, size) where position is (x, y) and size is (width_percentage, height_percentage).
     """
     base_name = os.path.splitext(filename)[0]
     parts = base_name.split("_")
 
     is_base_bg = parts[1] == "1"
-    position_x = float(parts[2].strip("%")) / 100
-    position_y = float(parts[3].strip("%")) / 100
-    width_pct = float(parts[4].strip("%")) / 100
-    height_pct = float(parts[5].strip("%")) / 100
+    if is_base_bg:
+        position_x = float(parts[2].strip("%")) / 100
+        position_y = float(parts[3].strip("%")) / 100
+        width_pct = float(parts[4].strip("%")) / 100
+        height_pct = float(parts[5].strip("%")) / 100
 
-    return is_base_bg, (position_x, position_y), (width_pct, height_pct)
+        return is_base_bg, (position_x, position_y), (width_pct, height_pct)
+    else:
+        return is_base_bg, None, None
 
 
-def create_image(bg_img_src, fg_img_src, position, size):
-    bg_img = open_image(bg_img_src)
-    fg_img = open_image(fg_img_src)
+def create_image(is_base_bg, base_img_src, user_img_src, position, size):
+    if is_base_bg:
+        bg_img = open_image(base_img_src).convert("RGBA")
+        fg_img = open_image(user_img_src).convert("RGBA")
 
-    # Determine the smaller width
-    min_width = min(bg_img.width, fg_img.width)
+        # Determine the smaller width between background and foreground
+        result_width = min(bg_img.width, fg_img.width)
 
-    # Calculate new heights maintaining aspect ratio
-    bg_new_height = int((min_width / bg_img.width) * bg_img.height)
-    fg_new_height = int((min_width / fg_img.width) * fg_img.height)
+        # Calculate new height for the background maintaining aspect ratio
+        bg_aspect_ratio = bg_img.height / bg_img.width
+        result_height = int(result_width * bg_aspect_ratio)
 
-    # Resize both images to the same width while keeping the aspect ratio
-    bg_img = bg_img.resize((min_width, bg_new_height), Image.LANCZOS)
-    fg_img = fg_img.resize(
-        (int(min_width * size[0]), int(fg_new_height * size[1])), Image.LANCZOS
-    )
+        # Resize the background image
+        bg_img = bg_img.resize((result_width, result_height), Image.LANCZOS)
 
-    # Create a new image with the width of the resized images and maximum height
-    new_image = Image.new("RGB", (min_width, bg_new_height))
+        # Calculate target dimensions for the foreground based on allocated size
+        target_width = int(result_width * size[0])
+        target_height = int(result_height * size[1])
 
-    # Paste the user image as the background
+        # Handle cases where target dimensions might be zero
+        if target_width <= 0 or target_height <= 0:
+            raise ValueError(
+                "Allocated size results in invalid dimensions for the foreground image."
+            )
+
+        # Calculate scaling factor to cover the target size while maintaining aspect ratio
+        original_fg_width, original_fg_height = fg_img.size
+        scale = max(
+            target_width / original_fg_width, target_height / original_fg_height
+        )
+        new_fg_width = int(original_fg_width * scale)
+        new_fg_height = int(original_fg_height * scale)
+
+        # Resize the foreground image
+        fg_img = fg_img.resize((new_fg_width, new_fg_height), Image.LANCZOS)
+
+        # Calculate crop coordinates to center the image
+        left = (new_fg_width - target_width) // 2
+        top = (new_fg_height - target_height) // 2
+        right = left + target_width
+        bottom = top + target_height
+
+        # Crop the foreground image to the target dimensions
+        fg_img = fg_img.crop((left, top, right, bottom))
+
+        # Calculate paste position
+        paste_x = int(result_width * position[0])
+        paste_y = int(result_height * position[1])
+    else:
+        bg_img = open_image(user_img_src)
+        fg_img = open_image(base_img_src)
+
+        result_width = bg_img.width
+        result_height = bg_img.height
+
+        fg_new_height = int(bg_img.width / fg_img.width * fg_img.height)
+        fg_img = fg_img.resize((bg_img.width, fg_new_height), Image.LANCZOS)
+
+        paste_x = 0
+        paste_y = 0
+
+    # Create a new image with the dimensions of the resized background
+    new_image = Image.new("RGBA", (result_width, result_height))
     new_image.paste(bg_img, (0, 0))
 
-    # Paste the base image on top of the user image
-    new_image.paste(
-        fg_img,
-        (
-            int(new_image.width * position[0]),
-            int(new_image.height * position[1]),
-        ),
-        fg_img.convert("RGBA") if fg_img.mode in ("RGBA", "LA") else None,
-    )
+    # Paste the cropped foreground image onto the background
+    new_image.paste(fg_img, (paste_x, paste_y), fg_img)
 
-    # Save the image to a BytesIO object instead of the filesystem
+    # Save the result to a BytesIO object
     result_image_io = BytesIO()
     new_image.save(result_image_io, format="PNG")
-    result_image_io.seek(0)  # Rewind the BytesIO object to the beginning
+    result_image_io.seek(0)
 
     return result_image_io

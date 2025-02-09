@@ -11,7 +11,7 @@ token = os.getenv("DISCORD_BOT_TOKEN")
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!!!", intents=intents)
+bot = commands.Bot(command_prefix="!!", intents=intents)
 
 
 @bot.command()
@@ -19,6 +19,21 @@ bot = commands.Bot(command_prefix="!!!", intents=intents)
 async def sync(ctx):
     await bot.tree.sync()
     await ctx.send("Commands synced!")
+
+
+@bot.command()
+async def create(ctx):
+    if ctx.message.reference is not None:
+        reference_message = await ctx.channel.fetch_message(
+            ctx.message.reference.message_id
+        )
+        if len(reference_message.attachments) > 0 and reference_message.attachments[
+            0
+        ].content_type.startswith("image/"):
+            view = ImageSelectionView(reference_message.attachments[0].url)
+            await ctx.send("Choose a base image", view=view)
+        else:
+            await ctx.send("Please upload a valid image file.")
 
 
 @bot.hybrid_command()
