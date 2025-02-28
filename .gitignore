@@ -1,2 +1,5 @@
 .env
 __pycache__
+images
+full_song_data.json
+music.json
